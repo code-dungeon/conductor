@@ -1,0 +1,103 @@
+image: tmhub.io/cargo/valdez:0.0.9
+
+variables:
+  SSH_GIT_URL: "git@git.tmaws.io:node/conductor.git"
+
+stages:
+  - presetup
+  - setup
+  - test
+  - post-test
+  - release
+
+merge-test:
+  stage: presetup
+  tags:
+    - tm-prod cicd build
+  script:
+    - git remote set-url origin ${SSH_GIT_URL}
+    - git checkout $CI_COMMIT_REF_NAME
+    - git pull
+    - ./scripts/mergeTest.sh
+  only:
+    - develop@node/conductor
+  except:
+    - tags
+
+install:
+  stage: setup
+  tags:
+    - tm-prod cicd build
+  script:
+    - echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+    - rm -rf node_modules
+    - npm install --loglevel=warn
+  artifacts:
+    paths:
+    - node_modules
+    expire_in: 3 hour
+  except:
+    - tags
+
+unit-test:
+  stage: test
+  tags:
+    - tm-prod cicd build
+  script:
+    - npm run test:coverage
+    - npm run test:coverage:summary
+  coverage: /^Statements\s*:\s*([^%]+)/
+  except:
+    - tags
+
+lint:
+  stage: test
+  tags:
+    - tm-prod cicd build
+  script:
+    - npm run lint
+  except:
+    - tags
+
+release:
+  stage: release
+  tags:
+    - tm-prod cicd build
+  script:
+    - git remote set-url origin ${SSH_GIT_URL}
+    - git checkout $CI_COMMIT_REF_NAME
+    - git pull
+    - git fetch -u origin develop:develop
+    - export VERSION=$(node ./scripts/version.js)
+    - echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+    - npm run build
+    - npm run build:readme
+    - git add dist/
+    - git add docs/markdown
+    - git commit -m "Updated dist for release v${VERSION}" --allow-empty
+    - git tag -a v${VERSION} -m "Release v${VERSION}"
+    - git push origin master develop
+    - git push --tags origin
+    - npm publish --access restricted
+  when: manual
+  only:
+    - master@node/conductor
+
+pages:
+  stage: post-test
+  tags:
+    - tm-prod cicd build
+  script:
+    - git remote set-url origin ${SSH_GIT_URL}
+    - git checkout $CI_COMMIT_REF_NAME
+    - git pull
+    - npm run build:docs
+    - mv docs/html/ public/
+  artifacts:
+    paths:
+      - public
+  allow_failure: true
+  only:
+    - develop@node/conductor
+  except:
+    - tags
